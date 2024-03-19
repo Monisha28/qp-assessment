@@ -28,7 +28,7 @@ const inventoryItemSchema = Joi.array().items(
 );
 
 export const validateInventoryItems = (req: Request, res: Response, next: NextFunction) => {
-    const { error } = inventoryItemSchema.validate(req.body);
+    const { error } = inventoryItemSchema.validate(req.body?.inventoryItems);
 
     if (error) {
         return res.status(400).json({ message: error.details[0].message });
@@ -37,7 +37,6 @@ export const validateInventoryItems = (req: Request, res: Response, next: NextFu
     next();
 };
 
-
 const productSchema = Joi.object({
     productId: Joi.number().required(),
     orderedQuantity: Joi.number().min(1).required(),
@@ -45,7 +44,6 @@ const productSchema = Joi.object({
 });
 
 const orderSchema = Joi.object({
-    userId: Joi.number().required(),
     products: Joi.array().items(productSchema).required(),
     totalPrice: Joi.number().min(0).required()
 });

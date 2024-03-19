@@ -22,25 +22,56 @@ export const viewAvailableItems = async (req: Request, res: Response) => {
 
 export const orderGroceryItems = async (req: Request, res: Response) => {
     try {
-        const { userId, products, totalPrice }: Order = req.body;
+        const { products, totalPrice }: Order = req.body;
+
+        const productIds = products.map(product => product.productId);
+
+        const inventoryQuery = `
+            SELECT JSON_OBJECTAGG(id, quantityAvailable) as itemQuantityAvailability
+            FROM inventory 
+            WHERE id IN (?)
+        `;
+        let [{ itemQuantityAvailability }]: any = await executeQuery(inventoryQuery, [productIds]);
+        itemQuantityAvailability = JSON.parse(itemQuantityAvailability)
+
+        for (let {productId, orderedQuantity} of products) {
+            itemQuantityAvailability[productId] = itemQuantityAvailability[productId] - orderedQuantity;
+            if (itemQuantityAvailability[productId] < 0) {
+                return res.status(400).json({ message: 'Order cannot be placed, Grocery item goes Out Of Stock'});
+            }
+        }
+
+        await executeQuery("START TRANSACTION");
 
         const orderQuery = 'INSERT INTO orders (userId, totalPrice) VALUES (?, ?)';
-        const orderResult: {[k: string]: any} = await executeQuery(orderQuery, [userId, totalPrice]);
+        // @ts-ignore
+        const orderResult: {[k: string]: any} = await executeQuery(orderQuery, [req.user.userId, totalPrice]);
         const orderId = orderResult.insertId;
 
         const orderItemsQuery = `
             INSERT INTO order_items 
             (orderId, productId, orderedQuantity, unitSellingPrice) 
-            VALUES (?)
+            VALUES ?
         `;
         const orderItemsValues = products.map(product => 
             [orderId, product.productId, product.orderedQuantity, product.unitSellingPrice]
         );
         await executeQuery(orderItemsQuery, [orderItemsValues]);
 
+        const query = `
+            INSERT IGNORE INTO inventory (id, quantityAvailable) 
+            VALUES ? AS i 
+            ON DUPLICATE KEY UPDATE 
+            quantityAvailable = i.quantityAvailable
+        `;
+        await executeQuery(query, [Object.entries(itemQuantityAvailability)]);
+
+        await executeQuery("COMMIT");
+
         return res.status(200).json({ message: 'Grocery items booked successfully', orderId });
     } catch (error) {
         console.error('Error booking grocery items:', error);
+        await executeQuery("ROLLBACK");
         return res.status(500).json({ message: 'Internal server error' });
     }
-};
+};  
